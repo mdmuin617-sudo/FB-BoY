@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TasklyBux Telegram Bot
+axFounder Telegram Bot
 A complete task-based earning bot with admin controls,
 FSM flows, SQLite database, referral system, and bilingual support.
 """
@@ -36,8 +36,9 @@ from aiogram.types import (
 # CONFIGURATION
 # ─────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-MAIN_ADMIN = 8907284640 # Hardcoded main admin ID
-SECOND_ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))  # From Railway env var
+MAIN_ADMIN = 8907284640  # Hardcoded main admin ID
+_second_admin_raw = os.environ.get("ADMIN_ID", "").strip()
+SECOND_ADMIN_ID = int(_second_admin_raw) if _second_admin_raw.isdigit() else 0  # From Railway env var
 
 TASK_PRICE = 0.0450
 MIN_WITHDRAW = 0.20
@@ -61,7 +62,7 @@ def is_admin(user_id: int) -> bool:
 TRANSLATIONS = {
     "en": {
         "welcome": (
-            "👋 <b>Welcome to TasklyBux!</b>\n\n"
+            "👋 <b>Welcome to axFounder!</b>\n\n"
             "💼 Complete simple tasks.\n"
             "💰 Earn money.\n"
             "🚀 Withdraw anytime after reaching the minimum balance.\n\n"
@@ -92,8 +93,8 @@ TRANSLATIONS = {
         ),
         "generated_info": (
             "✅ <b>Your Account Details</b>\n\n"
-            "👤 <b>First Name:</b> {first}\n"
-            "👤 <b>Last Name:</b> {last}\n"
+            "👤 <b>First Name:</b> <code>{first}</code>\n"
+            "👤 <b>Last Name:</b> <code>{last}</code>\n"
             "🔑 <b>Password:</b> <code>{password}</code>\n\n"
             "⚠️ Use ONLY this information to create your Facebook account."
         ),
@@ -132,7 +133,7 @@ TRANSLATIONS = {
             "💰 Earned Last 30 Days: <b>${earned30:.4f}</b>\n"
             "💵 Earned Last 24 Hours: <b>${earned24:.4f}</b>\n\n"
             "🔗 <b>Your Referral Link:</b>\n"
-            "<code>[t.me](https://t.me/{bot_username}?start={user_id})</code>"
+            "<code>https://t.me/{bot_username}?start={user_id}</code>"
         ),
         "home": "🏠 Returned to home.",
         "approved_notify": (
@@ -155,7 +156,7 @@ TRANSLATIONS = {
     },
     "bn": {
         "welcome": (
-            "👋 <b>TasklyBux-এ স্বাগতম!</b>\n\n"
+            "👋 <b>axFounder-এ স্বাগতম!</b>\n\n"
             "💼 সহজ কাজ সম্পন্ন করুন।\n"
             "💰 অর্থ উপার্জন করুন।\n"
             "🚀 ন্যূনতম ব্যালেন্সে পৌঁছানোর পরে যেকোনো সময় উইথড্র করুন।\n\n"
@@ -186,8 +187,8 @@ TRANSLATIONS = {
         ),
         "generated_info": (
             "✅ <b>আপনার অ্যাকাউন্ট তথ্য</b>\n\n"
-            "👤 <b>প্রথম নাম:</b> {first}\n"
-            "👤 <b>শেষ নাম:</b> {last}\n"
+            "👤 <b>প্রথম নাম:</b> <code>{first}</code>\n"
+            "👤 <b>শেষ নাম:</b> <code>{last}</code>\n"
             "🔑 <b>পাসওয়ার্ড:</b> <code>{password}</code>\n\n"
             "⚠️ Facebook অ্যাকাউন্ট তৈরিতে শুধুমাত্র এই তথ্য ব্যবহার করুন।"
         ),
@@ -226,7 +227,7 @@ TRANSLATIONS = {
             "💰 গত ৩০ দিনে উপার্জন: <b>${earned30:.4f}</b>\n"
             "💵 গত ২৪ ঘণ্টায় উপার্জন: <b>${earned24:.4f}</b>\n\n"
             "🔗 <b>আপনার রেফারেল লিঙ্ক:</b>\n"
-            "<code>[t.me](https://t.me/{bot_username}?start={user_id})</code>"
+            "<code>https://t.me/{bot_username}?start={user_id}</code>"
         ),
         "home": "🏠 হোমে ফিরে এসেছেন।",
         "approved_notify": (
@@ -262,8 +263,19 @@ def t(user_id: int, key: str, **kwargs) -> str:
     if kwargs:
         try:
             return text.format(**kwargs)
-        except KeyError:
-            return text
+        except (KeyError, ValueError):
+            # Try partial formatting — replace only available keys
+            import string
+            formatter = string.Formatter()
+            result = text
+            try:
+                # Get all field names in the template
+                fields = {fname for _, fname, _, _ in formatter.parse(text) if fname is not None}
+                # Only pass kwargs that exist in template
+                safe_kwargs = {k: v for k, v in kwargs.items() if k in fields}
+                return text.format(**safe_kwargs)
+            except Exception:
+                return text
     return text
 
 
@@ -429,7 +441,7 @@ def ensure_user(user_id: int, username: str, full_name: str, referred_by: int = 
     conn.close()
 
 
-def get_user(user_id: int) -> dict | None:
+def get_user(user_id: int):
     """Fetch a user row as a dict."""
     conn = get_db()
     c = conn.cursor()
@@ -547,7 +559,7 @@ def get_pending_submissions() -> list:
     return rows
 
 
-def get_submission_by_id(sub_id: int) -> dict | None:
+def get_submission_by_id(sub_id: int):
     """Fetch a single submission by ID."""
     conn = get_db()
     c = conn.cursor()
@@ -717,7 +729,7 @@ LAST_NAMES = [
 ]
 
 
-def generate_name() -> tuple[str, str]:
+def generate_name():
     """Generate a random realistic English first and last name."""
     return random.choice(FIRST_NAMES), random.choice(LAST_NAMES)
 
@@ -1004,8 +1016,27 @@ async def handle_ask_uid(message: Message, state: FSMContext):
 async def handle_receive_uid(message: Message, state: FSMContext):
     """Save UID and ask for cookies."""
     uid = message.from_user.id
-    # Ignore cancel text — handled by global cancel handler
-    await state.update_data(fb_uid=message.text.strip())
+    text = message.text.strip() if message.text else ""
+
+    # Block cancel button text from being saved as UID
+    if text in {"Cancel ❌", "বাতিল ❌"}:
+        await state.clear()
+        await message.answer(
+            t(uid, "home"),
+            reply_markup=home_keyboard(uid),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # Block empty or too short input
+    if not text or len(text) < 3:
+        await message.answer(
+            "❌ Invalid UID. Please send your correct Facebook UID.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    await state.update_data(fb_uid=text)
     await state.set_state(TaskFSM.waiting_cookies)
     await message.answer(
         t(uid, "ask_cookies"),
@@ -1021,7 +1052,27 @@ async def handle_receive_uid(message: Message, state: FSMContext):
 async def handle_receive_cookies(message: Message, state: FSMContext):
     """Save cookies and show confirmation keyboard."""
     uid = message.from_user.id
-    await state.update_data(fb_cookies=message.text.strip())
+    text = message.text.strip() if message.text else ""
+
+    # Block cancel button text from being saved as cookies
+    if text in {"Cancel ❌", "বাতিল ❌"}:
+        await state.clear()
+        await message.answer(
+            t(uid, "home"),
+            reply_markup=home_keyboard(uid),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # Block empty or too short input
+    if not text or len(text) < 10:
+        await message.answer(
+            "❌ Invalid cookies. Please send your correct Facebook cookies.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    await state.update_data(fb_cookies=text)
     await state.set_state(TaskFSM.confirming)
     await message.answer(
         "✅ <b>Cookies received!</b>\n\nPress <b>Account Registered ✅</b> to submit.",
@@ -1225,12 +1276,32 @@ async def handle_referrals(message: Message, state: FSMContext):
     """Show referral statistics and link."""
     await state.clear()
     uid = message.from_user.id
+    lang = get_user_lang(uid)
     me = await bot.get_me()
     stats = get_referral_stats(uid, me.username)
-    await message.answer(
-        t(uid, "referrals_info", **stats),
-        parse_mode=ParseMode.HTML,
-    )
+
+    if lang == "bn":
+        text = (
+            "👥 <b>আমার রেফারেল</b>\n\n"
+            f"👥 মোট রেফারেল: <b>{stats['total']}</b>\n"
+            f"🆕 গত ২৪ ঘণ্টায় যোগদান: <b>{stats['last24']}</b>\n"
+            f"💰 গত ৩০ দিনে উপার্জন: <b>${stats['earned30']:.4f}</b>\n"
+            f"💵 গত ২৪ ঘণ্টায় উপার্জন: <b>${stats['earned24']:.4f}</b>\n\n"
+            f"🔗 <b>আপনার রেফারেল লিঙ্ক:</b>\n"
+            f"<code>https://t.me/{stats['bot_username']}?start={stats['user_id']}</code>"
+        )
+    else:
+        text = (
+            "👥 <b>My Referrals</b>\n\n"
+            f"👥 Total Referrals: <b>{stats['total']}</b>\n"
+            f"🆕 Joined Last 24h: <b>{stats['last24']}</b>\n"
+            f"💰 Earned Last 30 Days: <b>${stats['earned30']:.4f}</b>\n"
+            f"💵 Earned Last 24 Hours: <b>${stats['earned24']:.4f}</b>\n\n"
+            f"🔗 <b>Your Referral Link:</b>\n"
+            f"<code>https://t.me/{stats['bot_username']}?start={stats['user_id']}</code>"
+        )
+
+    await message.answer(text, parse_mode=ParseMode.HTML)
 
 
 # ─────────────────────────────────────────────
@@ -1547,7 +1618,7 @@ async def main():
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    logger.info("🚀 TasklyBux Bot is starting...")
+    logger.info("🚀 axFounder Bot is starting...")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
