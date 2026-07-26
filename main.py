@@ -40,7 +40,7 @@ MAIN_ADMIN = 8907284640  # Hardcoded main admin ID
 _second_admin_raw = os.environ.get("ADMIN_ID", "").strip()
 SECOND_ADMIN_ID = int(_second_admin_raw) if _second_admin_raw.isdigit() else 0  # From Railway env var
 
-TASK_PRICE = 0.0450
+TASK_PRICE = 0.0450  # Runtime value; overridden from DB on startup
 MIN_WITHDRAW = 0.20
 REFERRAL_COMMISSION = 0.10  # 10%
 DEFAULT_PASSWORD = "axFacebook@18"
@@ -348,6 +348,11 @@ def init_db():
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('task_password', ?)",
         (DEFAULT_PASSWORD,),
     )
+    # Insert default task price if not present
+    c.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('task_price', ?)",
+        (str(TASK_PRICE),),
+    )
 
     # Referral earnings log
     c.execute("""
@@ -511,6 +516,33 @@ def set_task_password(new_password: str):
     )
     conn.commit()
     conn.close()
+
+
+def get_task_price_from_db() -> float:
+    """Retrieve current Facebook task price from settings."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key = 'task_price'")
+    row = c.fetchone()
+    conn.close()
+    return float(row["value"]) if row else TASK_PRICE
+
+
+def set_task_price_in_db(price: float):
+    """Persist the Facebook task price to settings."""
+    conn = get_db()
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('task_price', ?)",
+        (str(price),),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_fb_task_btn_text() -> str:
+    """Return the current Facebook task button label with live price."""
+    price = get_task_price_from_db()
+    return f"Facebook Cookies (No Mail) - ${price:.4f}"
 
 
 def has_pending_submission(user_id: int) -> bool:
@@ -765,10 +797,10 @@ def cancel_keyboard(user_id: int) -> ReplyKeyboardMarkup:
 
 
 def task_list_keyboard(user_id: int) -> ReplyKeyboardMarkup:
-    """Tasks menu keyboard."""
+    """Tasks menu keyboard — button label reflects live price."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=t(user_id, "task_fb_btn"))],
+            [KeyboardButton(text=get_fb_task_btn_text())],
             [KeyboardButton(text=t(user_id, "cancel_btn"))],
         ],
         resize_keyboard=True,
@@ -950,7 +982,7 @@ async def handle_tasks(message: Message, state: FSMContext):
 # ─────────────────────────────────────────────
 # FACEBOOK TASK — DESCRIPTION
 # ─────────────────────────────────────────────
-@router.message(F.text == "Facebook Cookies (No Mail) - $0.0450")
+@router.message(F.text.startswith("Facebook Cookies (No Mail) - $"))
 async def handle_fb_task(message: Message, state: FSMContext):
     """Show Facebook task description and set state."""
     uid = message.from_user.id
@@ -1155,7 +1187,19 @@ async def handle_usdt_selected(message: Message, state: FSMContext):
 async def handle_wallet_received(message: Message, state: FSMContext):
     """Save wallet and ask for amount."""
     uid = message.from_user.id
-    await state.update_data(wallet=message.text.strip())
+    text = message.text.strip() if message.text else ""
+
+    # Block cancel button text from being saved as wallet address
+    if text in {"Cancel ❌", "বাতিল ❌"}:
+        await state.clear()
+        await message.answer(
+            t(uid, "home"),
+            reply_markup=home_keyboard(uid),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    await state.update_data(wallet=text)
     await state.set_state(WithdrawFSM.waiting_amount)
     balance = get_balance(uid)
     await message.answer(
@@ -1169,7 +1213,17 @@ async def handle_wallet_received(message: Message, state: FSMContext):
 async def handle_amount_received(message: Message, state: FSMContext):
     """Validate amount and submit withdrawal request."""
     uid = message.from_user.id
-    text = message.text.strip()
+    text = message.text.strip() if message.text else ""
+
+    # Block cancel button text
+    if text in {"Cancel ❌", "বাতিল ❌"}:
+        await state.clear()
+        await message.answer(
+            t(uid, "home"),
+            reply_markup=home_keyboard(uid),
+            parse_mode=ParseMode.HTML,
+        )
+        return
 
     try:
         amount = float(text)
@@ -1342,6 +1396,84 @@ async def cmd_pass(message: Message):
 
 
 # ─────────────────────────────────────────────
+# ADMIN: /price — Set Facebook task price
+# ─────────────────────────────────────────────
+@router.message(Command("price"))
+async def cmd_price(message: Message):
+    """Admin command to change the Facebook task price."""
+    uid = message.from_user.id
+    if not is_admin(uid):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        current = get_task_price_from_db()
+        await message.answer(
+            f"💵 <b>Current Facebook Task Price:</b> <code>${current:.4f}</code>\n\n"
+            f"Usage: <code>/price 0.0500</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    try:
+        new_price = float(parts[1].strip())
+        if new_price <= 0:
+            raise ValueError("Price must be positive")
+    except ValueError:
+        await message.answer(
+            "❌ Invalid price. Example: <code>/price 0.0500</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    global TASK_PRICE
+    TASK_PRICE = new_price
+    set_task_price_in_db(new_price)
+
+    await message.answer(
+        f"✅ <b>Facebook Task Price Updated!</b>\n\n"
+        f"💵 New Price: <code>${new_price:.4f}</code>\n\n"
+        f"🔘 Button will now show:\n"
+        f"<code>Facebook Cookies (No Mail) - ${new_price:.4f}</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+# ─────────────────────────────────────────────
+# ADMIN: /admin — Show all admin commands
+# ─────────────────────────────────────────────
+@router.message(Command("admin"))
+async def cmd_admin(message: Message):
+    """Show all available admin commands."""
+    uid = message.from_user.id
+    if not is_admin(uid):
+        return
+
+    current_price = get_task_price_from_db()
+    current_pass = get_task_password()
+
+    text = (
+        "🛡️ <b>Admin Commands Panel</b>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "📋 <b>Task Management</b>\n"
+        f"  /price <code>{{amount}}</code> — Set FB task price\n"
+        f"     Current: <code>${current_price:.4f}</code>\n\n"
+        f"  /pass <code>{{password}}</code> — Set task password\n"
+        f"     Current: <code>{current_pass}</code>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "🔍 <b>Review & Reports</b>\n"
+        "  /review — Browse pending submissions\n"
+        "  /stats — Bot-wide statistics\n"
+        "  /xl — Export approved submissions (XLSX)\n"
+        "  /reset — Clear XLSX & start new collection\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "⚙️ <b>Other</b>\n"
+        "  /admin — Show this panel\n"
+    )
+    await message.answer(text, parse_mode=ParseMode.HTML)
+
+
+# ─────────────────────────────────────────────
 # ADMIN: /review — Browse & action pending submissions
 # ─────────────────────────────────────────────
 @router.message(Command("review"))
@@ -1433,7 +1565,8 @@ async def handle_review_callback(call: CallbackQuery):
             return
 
         update_submission_status(sub_id, "approved")
-        add_balance(sub["user_id"], TASK_PRICE)
+        current_price = get_task_price_from_db()
+        add_balance(sub["user_id"], current_price)
 
         # Save to persistent xlsx file
         append_to_xlsx(sub["uid"], sub["cookies"])
@@ -1441,7 +1574,7 @@ async def handle_review_callback(call: CallbackQuery):
         # Check referral commission
         user = get_user(sub["user_id"])
         if user and user.get("referred_by"):
-            commission = round(TASK_PRICE * REFERRAL_COMMISSION, 6)
+            commission = round(current_price * REFERRAL_COMMISSION, 6)
             add_balance(user["referred_by"], commission)
             log_referral_earning(user["referred_by"], sub["user_id"], commission)
 
@@ -1450,7 +1583,7 @@ async def handle_review_callback(call: CallbackQuery):
             worker_lang = get_user_lang(sub["user_id"])
             await bot.send_message(
                 sub["user_id"],
-                TRANSLATIONS[worker_lang]["approved_notify"].format(amount=TASK_PRICE),
+                TRANSLATIONS[worker_lang]["approved_notify"].format(amount=current_price),
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
@@ -1608,6 +1741,10 @@ async def main():
     # Initialize the database and xlsx file
     init_db()
     ensure_xlsx()
+
+    # Load persisted task price into global
+    global TASK_PRICE
+    TASK_PRICE = get_task_price_from_db()
 
     # Create bot instance with HTML parse mode default
     bot = Bot(
